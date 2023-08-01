@@ -1,0 +1,224 @@
+//+------------------------------------------------------------------+
+//|                                                      trinity.mq5 |
+//|                                  Copyright 2023, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2023, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+//+------------------------------------------------------------------+
+//| Include                                                          |
+//+------------------------------------------------------------------+
+#include <Expert\Expert.mqh>
+//--- available signals
+#include <Expert\Signal\SignalMA.mqh>
+//--- available trailing
+#include <Expert\Trailing\TrailingMA.mqh>
+//--- available money management
+#include <Expert\Money\MoneySizeOptimized.mqh>
+//+------------------------------------------------------------------+
+//| Inputs                                                           |
+//+------------------------------------------------------------------+
+//--- inputs for expert
+input string             Expert_Title                      = "trinity";   // Document name
+ulong                    Expert_MagicNumber                = 15393;       //
+bool                     Expert_EveryTick                  = false;       //
+//--- inputs for main signal
+input int                Signal_ThresholdOpen              = 0;           // Signal threshold value to open [0...100]
+input int                Signal_ThresholdClose             = 0;           // Signal threshold value to close [0...100]
+input double             Signal_PriceLevel                 = 0.0;         // Price level to execute a deal
+input double             Signal_StopLevel                  = 50.0;        // Stop Loss level (in points)
+input double             Signal_TakeLevel                  = 100.0;       // Take Profit level (in points)
+input int                Signal_SMA_Period                 = 10;          // Periodo della media mobile personalizzata
+input int                Signal_EMA_Period                 = 200;         // Periodo dell'EMA per il trigger
+input int                Signal_Expiration                 = 4;           // Expiration of pending orders (in bars)
+//--- inputs for trailing
+input int                Trailing_MA_Period                = 200;         // Period of MA
+input int                Trailing_MA_Shift                 = 5;           // Shift of MA
+input ENUM_MA_METHOD     Trailing_MA_Method                = MODE_SMA;    // Method of averaging
+input ENUM_APPLIED_PRICE Trailing_MA_Applied               = PRICE_CLOSE; // Prices series
+//--- inputs for money
+input double             Money_SizeOptimized_DecreaseFactor= 3.0;         // Decrease factor
+input double             Money_SizeOptimized_Percent       = 10.0;        // Percent
+input double             Risk_Percent                      = 1.0;         // Risk percentage per trade
+//+------------------------------------------------------------------+
+//| Global expert objects                                            |
+//+------------------------------------------------------------------+
+CExpert ExtExpert;
+CSignalMA filter0; // Filtro della media mobile personalizzata
+double emaValue;   // Valore dell'EMA
+double lotSize;    // Dimensione della posizione
+//+------------------------------------------------------------------+
+//| Initialization function of the expert                            |
+//+------------------------------------------------------------------+
+void OnInit()
+{
+    //--- Initializing expert
+    if (!ExtExpert.Init(Symbol(), Period(), Expert_EveryTick, Expert_MagicNumber))
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error initializing expert");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    
+    //--- Creating signal
+    CExpertSignal *signal = new CExpertSignal();
+    if (signal == NULL)
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error creating signal");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    ExtExpert.InitSignal(signal);
+    signal->ThresholdOpen(Signal_ThresholdOpen); // Aggiungi la freccia -> per accedere ai membri di signal
+    signal->ThresholdClose(Signal_ThresholdClose); // Aggiungi la freccia -> per accedere ai membri di signal
+    signal->PriceLevel(Signal_PriceLevel); // Aggiungi la freccia -> per accedere ai membri di signal
+    signal->StopLevel(Signal_StopLevel); // Aggiungi la freccia -> per accedere ai membri di signal
+    signal->TakeLevel(Signal_TakeLevel); // Aggiungi la freccia -> per accedere ai membri di signal
+    signal->Expiration(Signal_Expiration); // Aggiungi la freccia -> per accedere ai membri di signal
+
+    //--- Creazione del filtro CSignalMA (filtro personalizzato basato sulla media mobile)
+    filter0.Init(Signal_SMA_Period)
+    filter0.Method(MODE_SMA); // Usa la media mobile semplice come metodo di media mobile
+    filter0.Applied(PRICE_TYPICAL); // Usa i prezzi tipici
+
+    //--- Creazione del filtro dell'EMA a 200 periodi come trigger
+    CSignalMA filter1;
+    filter1.PeriodMA(Signal_EMA_Period);
+    filter1.Method(MODE_EMA); // Usa l'EMA come metodo di media mobile
+    filter1.Applied(PRICE_CLOSE); // Usa i prezzi di chiusura
+
+    //--- Creation of trailing object
+    CTrailingMA *trailing = new CTrailingMA;
+    if (trailing == NULL)
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error creating trailing");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    //--- Add trailing to expert (will be deleted automatically))
+    if (!ExtExpert.InitTrailing(trailing))
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error initializing trailing");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    //--- Set trailing parameters
+    trailing.Period(Trailing_MA_Period);
+    trailing.Shift(Trailing_MA_Shift);
+    trailing.Method(Trailing_MA_Method);
+    trailing.Applied(Trailing_MA_Applied);
+
+    //--- Creation of money object
+    CMoneySizeOptimized *money = new CMoneySizeOptimized;
+    if (money == NULL)
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error creating money");
+        ExtExpert.Deinit();
+        returnExpert.InitMoney(money))
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error initializing money");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    //--- Set money parameters
+    money.DecreaseFactor(Money_SizeOptimized_DecreaseFactor);
+    money.Percent(Money_SizeOptimized_Percent);
+
+    //--- Check all trading objects parameters
+    if (!ExtExpert.ValidationSettings())
+    {
+        //--- failed
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    //--- Tuning of all necessary indicators
+    if (!ExtExpert.InitIndicators())
+    {
+        //--- failed
+        Print(_FUNCTION_ + ": error initializing indicators");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    //--- ok
+    return (INIT_SUCCEEDED);
+}
+
+void OnDeinit(const int reason)
+{
+    ExtExpert.Deinit();
+}
+
+void OnTick()
+{
+    ExtExpert.OnTick();
+
+    // Ottenere il valore della media mobile personalizzata
+    double customMA = filter0.GetValue(0);
+    if (customMA == 0)
+        return;
+
+    // Calcolo dell'EMA
+    emaValue = iMA(NULL, 0, Signal_EMA_Period, 0, MODE_EMA, PRICE_CLOSE, 0);
+
+    // Verificare se il prezzo tocca l'EMA prima di aprire una nuova posizione
+    bool priceTouchesEMA = Low[0] < emaValue && High[0] > emaValue;
+
+    // Calcolo della dimensione della posizione in base al rischio percentuale
+    double riskAmount = AccountInfoDouble(ACCOUNT_FREEMARGIN) * Risk_Percent / 100.0;
+    lotSize = NormalizeDouble(riskAmount / (Signal_StopLevel * Point), 2);
+
+    // Apri una posizione "Buy" quando il segnale della media mobile è maggiore dell'EMA e il prezzo tocca l'EMA
+    if (customMA > emaValue && priceTouchesEMA)
+    {
+        if (!ExtExpert.Trade.IsTradeAllowed())
+            return;
+
+        double stopLoss = Signal_StopLevel * Point;
+        double takeProfit = Signal_TakeLevel * Point;
+
+        if (ExtExpert.Trade.Buy(lotSize, Symbol(), NULL, 0, stopLoss, takeProfit, "Buy Order", MagicNumber))
+        {
+            Print("Buy Order opened");
+        }
+    }
+
+    // Apri una posizione "Sell" quando il segnale della media mobile è minore dell'EMA e il prezzo tocca l'EMA
+    if (customMA < emaValue && priceTouchesEMA)
+    {
+        if (!ExtExpert.Trade.IsTradeAllowed())
+            return;
+
+        double stopLoss = Signal_StopLevel * Point;
+        double takeProfit = Signal_TakeLevel * Point;
+
+        if (ExtExpert.Trade.Sell(lotSize, Symbol(), NULL, 0, stopLoss, takeProfit, "Sell Order", MagicNumber))
+        {
+            Print("Sell Order opened");
+        }
+    }
+
+    // Chiudi la posizione quando il segnale cambia da "Buy" a "Sell" o viceversa
+    if ((customMA > emaValue && ExtExpert.Trade.PositionCount() > 0 && ExtExpert.Trade.PositionType(0) == POSITION_TYPE_SELL) ||
+        (customMA < emaValue && ExtExpert.Trade.PositionCount() > 0 && ExtExpert.Trade.PositionType(0) == POSITION_TYPE_BUY))
+    {
+        ExtExpert.Trade.Close(0);
+        Print("Order closed");
+    }
+}
+
+void OnTrade()
+{
+    ExtExpert.OnTrade();
+}
+
+void OnTimer()
+{
+    ExtExpert.OnTimer();
+}
